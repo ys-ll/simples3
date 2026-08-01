@@ -17,6 +17,12 @@ import (
 // getURL constructs a URL for a given path, with multiple optional
 // arguments as individual subfolders, based on the endpoint
 // specified in s3 struct.
+//
+// When s3.UseVirtualHostedStyle is true and a custom Endpoint is configured,
+// the first path segment is treated as the bucket and is prepended to the
+// host as a subdomain (https://<bucket>.<endpoint>/<rest>). The remaining
+// path segments become the URL path. S3-compatible services that reject
+// path-style URLs (e.g. Alibaba Cloud OSS) require this form.
 func (s3 *S3) getURL(path string, args ...string) (uri string) {
 	if len(args) > 0 {
 		path += "/" + strings.Join(args, "/")
@@ -25,12 +31,53 @@ func (s3 *S3) getURL(path string, args ...string) (uri string) {
 	encodedPath := encodePath(path)
 
 	if len(s3.Endpoint) > 0 {
+		if s3.UseVirtualHostedStyle && encodedPath != "" {
+			if vhURI, ok := s3.virtualHostedURL(encodedPath); ok {
+				return vhURI
+			}
+		}
 		uri = s3.Endpoint + "/" + encodedPath
 	} else {
 		uri = fmt.Sprintf(s3.URIFormat, s3.Region, encodedPath)
 	}
 
 	return uri
+}
+
+// virtualHostedURL rewrites an "endpoint/bucket/key..." path into a
+// virtual-hosted style URL of the form "scheme://bucket.endpoint/key...".
+// Returns false when the path doesn't carry a bucket (no leading segment)
+// so the caller can fall back to its default URL construction.
+func (s3 *S3) virtualHostedURL(encodedPath string) (string, bool) {
+	parts := strings.SplitN(encodedPath, "/", 2)
+	bucket := parts[0]
+	if bucket == "" {
+		return "", false
+	}
+
+	scheme := "https"
+	host := s3.Endpoint
+	if i := strings.Index(host, "://"); i >= 0 {
+		scheme = host[:i]
+		host = host[i+3:]
+	}
+	// strip userinfo, port-less normalization isn't needed for AWS SigV4 host
+	// signing — the AWS SigV4 canonical host matches the request Host header.
+	if i := strings.Index(host, "/"); i >= 0 {
+		host = host[:i]
+	}
+
+	var b strings.Builder
+	b.WriteString(scheme)
+	b.WriteString("://")
+	b.WriteString(bucket)
+	b.WriteByte('.')
+	b.WriteString(host)
+	if len(parts) > 1 && parts[1] != "" {
+		b.WriteByte('/')
+		b.WriteString(parts[1])
+	}
+	return b.String(), true
 }
 
 func detectFileSize(body io.Seeker) (int64, error) {

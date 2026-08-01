@@ -89,6 +89,81 @@ func TestGetURL(t *testing.T) {
 	}
 }
 
+func TestVirtualHostedStyle(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		path     string
+		args     []string
+		want     string
+	}{
+		{
+			name:     "OSS-style: bucket + key with custom endpoint, no scheme",
+			endpoint: "oss-cn-hangzhou.aliyuncs.com",
+			path:     "mybucket",
+			args:     []string{"path/to/key.txt"},
+			want:     "https://mybucket.oss-cn-hangzhou.aliyuncs.com/path/to/key.txt",
+		},
+		{
+			name:     "OSS-style: bucket only (e.g. ListObjects)",
+			endpoint: "oss-cn-hangzhou.aliyuncs.com",
+			path:     "mybucket",
+			want:     "https://mybucket.oss-cn-hangzhou.aliyuncs.com",
+		},
+		{
+			name:     "explicit https scheme preserved",
+			endpoint: "https://oss-cn-hangzhou.aliyuncs.com",
+			path:     "mybucket",
+			want:     "https://mybucket.oss-cn-hangzhou.aliyuncs.com",
+		},
+		{
+			name:     "explicit http scheme preserved (for local MinIO)",
+			endpoint: "http://localhost:9000",
+			path:     "mybucket",
+			want:     "http://mybucket.localhost:9000",
+		},
+		{
+			name:     "trailing path on endpoint stripped before subdomain",
+			endpoint: "https://oss-cn-hangzhou.aliyuncs.com/extra/",
+			path:     "mybucket",
+			want:     "https://mybucket.oss-cn-hangzhou.aliyuncs.com",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s3 := New("cn-hangzhou", "AccessKey", "SecretKey").
+				SetEndpoint(tt.endpoint).
+				SetVirtualHostedStyle(true)
+			got := s3.getURL(tt.path, tt.args...)
+			if got != tt.want {
+				t.Errorf("virtual-hosted getURL() got = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestVirtualHostedStyleDefaultOff(t *testing.T) {
+	// Without SetVirtualHostedStyle(true) we must keep the original
+	// path-style behaviour, so the S3-SDK upgrade stays non-breaking.
+	s3 := New("us-east-1", "AccessKey", "SecretKey").
+		SetEndpoint("https://oss-cn-hangzhou.aliyuncs.com")
+	if got := s3.getURL("mybucket", "k.txt"); got != "https://oss-cn-hangzhou.aliyuncs.com/mybucket/k.txt" {
+		t.Errorf("default path-style broken: got %q", got)
+	}
+}
+
+func TestVirtualHostedStyleEmptyPath(t *testing.T) {
+	// When path is empty, virtual-hosted style can't be applied
+	// (no bucket to use as subdomain). Caller still gets the original
+	// path-style URL so ListBuckets-style operations still work.
+	s3 := New("us-east-1", "AccessKey", "SecretKey").
+		SetEndpoint("https://oss-cn-hangzhou.aliyuncs.com").
+		SetVirtualHostedStyle(true)
+	if got := s3.getURL(""); got != "https://oss-cn-hangzhou.aliyuncs.com/" {
+		t.Errorf("empty path should fall back to path-style: got %q", got)
+	}
+}
+
 // Helper functions
 func uploadTestFiles(t *testing.T, s3 *S3, bucket string, filenames []string) {
 	for _, filename := range filenames {

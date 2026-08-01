@@ -29,8 +29,17 @@ type S3 struct {
 	Token     string
 	Endpoint  string
 	URIFormat string
-	initMode  string
-	expiry    time.Time
+	// UseVirtualHostedStyle enables virtual-hosted style addressing when a
+	// custom Endpoint is set. In virtual-hosted style the bucket name is
+	// embedded as a subdomain of the endpoint
+	// (e.g. https://mybucket.oss-cn-hangzhou.aliyuncs.com/key) instead of
+	// appearing in the URL path (https://oss-cn-hangzhou.aliyuncs.com/mybucket/key).
+	// S3-compatible services such as Alibaba Cloud OSS, Tencent COS and
+	// some private clouds reject path-style requests with
+	// "SecondLevelDomainForbidden", so this flag is required for them.
+	UseVirtualHostedStyle bool
+	initMode              string
+	expiry                time.Time
 
 	mu sync.Mutex
 }
@@ -89,6 +98,18 @@ func (s3 *S3) SetClient(client *http.Client) *S3 {
 	} else {
 		s3.Client = http.DefaultClient
 	}
+	return s3
+}
+
+// SetVirtualHostedStyle toggles virtual-hosted style URL addressing for S3
+// operations against a custom Endpoint. When enabled, the bucket name is
+// embedded as a subdomain of the endpoint
+// (https://mybucket.<endpoint>/<key>). S3-compatible services that reject
+// path-style URLs (Alibaba Cloud OSS, Tencent COS, Huawei OBS, etc.) need
+// this enabled. AWS S3 supports both styles; this is a no-op when no custom
+// Endpoint is set.
+func (s3 *S3) SetVirtualHostedStyle(enabled bool) *S3 {
+	s3.UseVirtualHostedStyle = enabled
 	return s3
 }
 
