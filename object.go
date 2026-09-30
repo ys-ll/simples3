@@ -157,15 +157,23 @@ func (s3 *S3) FilePut(u UploadInput) (PutResponse, error) {
 	}
 
 	content := make([]byte, fSize)
-	_, err = u.Body.Read(content)
+	// io.ReadFull succeeds for a zero-length read (empty body) and reports
+	// ErrUnexpectedEOF if the body is shorter than its size, unlike a bare
+	// Read which returns io.EOF on an already-exhausted reader.
+	_, err = io.ReadFull(u.Body, content)
 	if err != nil {
 		return PutResponse{}, err
 	}
 	u.Body.Seek(0, 0)
 
-	req, er := http.NewRequest(http.MethodPut, s3.getURL(u.Bucket, u.ObjectKey), u.Body)
-	if er != nil {
+	req, err := http.NewRequest(http.MethodPut, s3.getURL(u.Bucket, u.ObjectKey), u.Body)
+	if err != nil {
 		return PutResponse{}, err
+	}
+	// A non-nil empty body makes net/http fall back to chunked encoding and
+	// omit Content-Length; nil body sends a clean "Content-Length: 0".
+	if fSize == 0 {
+		req.Body = nil
 	}
 
 	if u.ContentType == "" {
